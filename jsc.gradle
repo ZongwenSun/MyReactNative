@@ -1,0 +1,53 @@
+buildscript {
+    repositories {
+        maven {
+            url "https://plugins.gradle.org/m2/"
+        }
+    }
+    dependencies {
+        classpath "de.undercouch:gradle-download-task:3.2.0"
+    }
+}
+
+apply plugin: 'maven'
+
+apply plugin: 'de.undercouch.download'
+
+
+import de.undercouch.gradle.tasks.download.Download
+
+def customDownloadsDir = System.getenv("REACT_NATIVE_DOWNLOADS_DIR")
+def downloadsDir = customDownloadsDir ? new File(customDownloadsDir) : new File("$buildDir/downloads")
+
+def thirdPartyNdkDir = new File("$buildDir/third-party-ndk")
+
+task downloadJSCHeaders(type: Download) {
+    // in sync with webkit SVN revision 174650
+    def jscAPIBaseURL = 'https://raw.githubusercontent.com/WebKit/webkit/38b15a3ba3c1b0798f2036f7cea36ffdc096202e/Source/JavaScriptCore/API/'
+    def jscHeaderFiles = ['JavaScript.h', 'JSBase.h', 'JSContextRef.h', 'JSObjectRef.h', 'JSRetainPtr.h', 'JSStringRef.h', 'JSValueRef.h', 'WebKitAvailability.h']
+    def output = new File(downloadsDir, 'jsc')
+    output.mkdirs()
+    src(jscHeaderFiles.collect { headerName -> "$jscAPIBaseURL$headerName" })
+    onlyIfNewer true
+    overwrite false
+    dest output
+}
+
+def dependenciesPath = System.getenv("REACT_NATIVE_DEPENDENCIES")
+
+
+// Create Android.mk library module based on so files from mvn + include headers fetched from webkit.org
+task prepareJSC(dependsOn: dependenciesPath ? [] : [downloadJSCHeaders]) << {
+    copy {
+        from zipTree(configurations.compile.fileCollection { dep -> dep.name == 'android-jsc' }.singleFile)
+        from dependenciesPath ? "$dependenciesPath/jsc-headers" : {downloadJSCHeaders.dest}
+        from 'src/main/jni/jsc/Android.mk'
+        include 'jni/**/*.so', '*.h', 'Android.mk'
+        filesMatching('*.h', { fname -> fname.path = "JavaScriptCore/${fname.path}"})
+        into "$thirdPartyNdkDir/jsc"
+    }
+}
+
+dependencies {
+    compile 'org.webkit:android-jsc:r174650'
+}
